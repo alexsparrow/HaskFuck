@@ -54,7 +54,7 @@ type BFState = (Int, Int)
 -- memArray  : Mutable array used for brainfuck memory
 data BFRecord = BFRecord {
   cmdStream :: [Cmd],
-  memArray :: IOArray Int Int
+  memArray :: IOArray Int Char
   }
 
 -- Monad layers
@@ -116,26 +116,27 @@ transArray ref idx f = do
 
 -- Execute a given command
 execute :: Cmd -> ReaderStateIO ()
+
 -- Increment data pointer
-execute Next = do
-  (pc, ptr) <- get
-  put (pc+1, ptr +1)
+execute Next = modify $ \(pc, ptr) -> (pc+1, ptr+1)
+
 -- Decrement data pointer
-execute Prev = do
-  (pc, ptr) <- get
-  put (pc+1, ptr-1)
+execute Prev = modify $ \(pc, ptr) -> (pc+1, ptr-1)
+
 -- Increment data value
 execute Inc = do
   env <- ask
   (pc, ptr) <- get
-  transArray (memArray env) ptr (+1)
+  transArray (memArray env) ptr (\x -> chr $ ord x + 1)
   put (pc+1, ptr)
+
 -- Decrement data value
 execute Dec = do
   env <- ask
   (pc, ptr) <- get
-  transArray (memArray env) ptr (\x -> x -1)
+  transArray (memArray env) ptr (\x -> chr $ ord x - 1)
   put (pc+1, ptr)
+
 -- If data pointer is 0 then jump past matching closing bracket
 -- Else just move to next instruction
 execute Start = do
@@ -143,24 +144,23 @@ execute Start = do
   (pc, ptr) <- get
   let match = findMatching (drop pc $ cmdStream env)
   val <- io $ readArray (memArray env) ptr
-  if val == 0 then put (pc+match+1, ptr)
-  else put (pc+1, ptr)
+  modify $ \(pc, ptr) -> if val == (chr 0) then (pc+match+1, ptr) else (pc+1, ptr)
+
 -- If data pointer is non-zero jump to instruction after matching opening bracket
 -- Otherwise just move to next instruction
 execute End = do
   env <- ask
   (pc, ptr) <- get
-  let search =  (reverse $ take (pc +1) $ cmdStream env)
-  let match = findMatching search
+  let match = findMatching (reverse $ take (pc +1) $ cmdStream env)
   val <- io $ readArray (memArray env) ptr
-  if val /= 0 then put (pc-match+1, ptr)
-  else put (pc+1, ptr)
+  modify $ \(pc, ptr) -> if val /= (chr 0) then (pc-match+1, ptr) else (pc+1, ptr)
+
 -- Print a character
 execute Out = do
   env <- ask
   (pc, ptr) <- get
   val <- io $ readArray (memArray env) ptr
-  io $ putChar $ chr val
+  io $ putChar $ val
   put (pc+1, ptr)
 
 execute cmd = error $ "Not implemented: " ++ (show cmd)
@@ -171,7 +171,7 @@ step = do
   env <- ask
   (pc, _) <- get
   let cmd = (cmdStream env) !! pc
---  io $ putStrLn $ (show cmd) ++ (show pc)
+ -- io $ putStrLn $ (show cmd) ++ (show pc)
   execute cmd
   (pc, _) <- get
   if pc == length (cmdStream env) then
@@ -184,11 +184,10 @@ main = do
   args <- getArgs
   input <- if length args == 0 then do
     return test
-      else do
+           else do
              s <- readFile $ args!!0
              return s
 
-  mem <- newArray (0, 1023) 0 :: IO (IOArray Int Int)
-
+  mem <- newArray (0, 30000) (chr 0) :: IO (IOArray Int Char)
   runStateT (runReaderT step (BFRecord (parseCmds input) mem)) (0,0)
   return ()
